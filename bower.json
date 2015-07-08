@@ -1,0 +1,23 @@
+{
+  "name": "default",
+  "version": "0.0.0",
+  "authors": [
+    "matissev"
+  ],
+  "description": "My gulp config",
+  "main": "index.jade",
+  "keywords": [
+    "default",
+    "gulp"
+  ],
+  "license": "MIT",
+  "homepage": "matissev.com",
+  "ignore": [
+    "**/.*",
+    "node_modules",
+    "bower_components",
+    "libs/",
+    "test",
+    "tests"
+  ]
+}
