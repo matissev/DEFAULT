@@ -5,7 +5,7 @@ var gulp = require('gulp'),
 	sequence = require('run-sequence'),
 	plumber = require('gulp-plumber'),
 	notify = require('gulp-notify'),
-	filter = require('gulp-filter'),
+	gulpif = require('gulp-if'),
 	run = require('gulp-run'),
 
 	jade = require('gulp-jade'),
@@ -112,7 +112,6 @@ gulp.task('images', function(){
 });
 
 gulp.task('spritesheet', function() {
-	var svgFilter = filter('**/*.svg');
 	return gulp.src('img/sprite/**/*.svg', {cwd: '.'})
 		.pipe(plumber())
 		.pipe(spritesheet({
@@ -143,8 +142,7 @@ gulp.task('spritesheet', function() {
 			}
 		})).on('error', function(error){ console.log(error); })
 		.pipe(gulp.dest('.'))
-		.pipe(svgFilter)
-		.pipe(svg2png())
+		.pipe(gulpif('*.svg', svg2png()))
 		.pipe(gulp.dest('.'));
 });
 
@@ -172,36 +170,56 @@ gulp.task('default', ['make'], function() {
 
 /* ____________________________________________________________________________________ DIST */
 
-gulp.task('less-dist', function(){
+gulp.task('less-dist', ['spritesheet'], function(){
 	return gulp.src(['less/*.less'])
 		.pipe(less())
 		.pipe(prefixer('last 5 versions', 'ie 9'))
-		.pipe(cssmin({compatibility: 'ie9'}))
+		.pipe(cssmin({
+			compatibility: 'ie9',
+			keepSpecialComments: 0,
+			roundingPrecision: -1
+		}))
 		.pipe(gulp.dest('build/css'));
 });
 
 gulp.task('jade-dist', function() {
-	return gulp.src(['*.jade', 'fr/*.jade'])
+	return gulp.src(['**/*.jade', '!**/includes/*.jade'])
 		.pipe(jade({pretty: true}))
-		.pipe(gulp.dest('build'));
+		.pipe(gulp.dest('.'));
 });
 
 gulp.task('js-dist', ['jade-dist'], function() {
-	var assets = useref.assets({searchPath: '.'});
-	var htmlFilter = filter('**/*.html');
-	var jsFilter = filter('**/*.js');
+	var assets = useref.assets();
 
-	return gulp.src(['build/**/*.html'])
+	return gulp.src(['**/*.html', '!libs/**', '!node_modules/**'])
 		.pipe(assets)
+		.pipe(gulpif('*.js', uglify()))
 		.pipe(assets.restore())
 		.pipe(useref())
-		.pipe(htmlFilter)
-		.pipe(htmlmin())
-		.pipe(htmlFilter.restore())
-		.pipe(jsFilter)
-		.pipe(uglify())
-		.pipe(jsFilter.restore())
 		.pipe(gulp.dest('build'));
+});
+
+gulp.task('minify-html', ['js-dist'], function(callback) {
+	return gulp.src(['build/**/*.html'])
+		.pipe(htmlmin({
+			removeComments: true,
+			removeCommentsFromCDATA: true,
+			removeCDATASectionsFromCDATA: true,
+			collapseBooleanAttributes: true,
+			removeAttributeQuotes: true,
+			removeRedundantAttributes: true,
+			useShortDoctype: true,
+			removeEmptyAttributes: true,
+			removeOptionalTags: true,
+			minifyJS: true,
+			minifyCSS: true,
+			collapseWhitespace: true
+		}))
+		.pipe(gulp.dest('build'));
+});
+
+gulp.task('clean-html', ['minify-html'], function(callback) {
+	del(['**/*.html', '!build/**', '!libs/**', '!node_modules/**'], callback);
 });
 
 gulp.task('images-dist', function(){
@@ -220,16 +238,9 @@ gulp.task('images-dist', function(){
 		.pipe(run('imageOptim -j -a -q -d build/img/'));
 });
 
-gulp.task('css-dist', function(callback) {
-	sequence(
-		'spritesheet',
-		['less-dist', 'images-dist'],
-	callback);
-});
-
 gulp.task('dist', function(callback) {
 	sequence(
 		'clean',
-		['css-dist', 'js-dist', 'fonts', 'medias', 'php'],
+		['clean-html', 'images-dist', 'less-dist', 'fonts', 'medias', 'php'],
 	callback);
 });
