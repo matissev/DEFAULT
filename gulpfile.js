@@ -1,4 +1,5 @@
 var gulp = require('gulp'),
+	fs = require('fs'),
 
 	server = require('browser-sync'),
 	del = require('del'),
@@ -9,6 +10,7 @@ var gulp = require('gulp'),
 	run = require('gulp-run'),
 
 	jade = require('gulp-jade'),
+	htmlvalidator = require('gulp-w3cjs'),
 	htmlmin = require('gulp-minify-html'),
 
 	less = require('gulp-less'),
@@ -16,18 +18,20 @@ var gulp = require('gulp'),
 	prefixer = require('gulp-autoprefixer'),
 	sourcemaps = require('gulp-sourcemaps'),
 
-	useref = require('gulp-useref'),
+	concat = require('gulp-concat'),
 	uglify = require('gulp-uglify'),
+
+	jsonTree = require("gulp-json-tree"),
+	replace = require('gulp-replace'),
 
 	imagemin = require('gulp-imagemin'),
 	spritesheet = require('gulp-svg-sprite');
 	svg2png = require('gulp-svg2png');
 
-
 /* ____________________________________________________________________________________ SERVER */
 
 gulp.task('server', function() {
-	server.init(null, {
+	return server.init(null, {
 		server: {
 			baseDir: 'build'
 		},
@@ -41,9 +45,8 @@ var reload = server.reload;
 
 var onError = function(err) {
 	notify.onError({
-		title: 'Gulp',
-		subtitle: 'Failure!',
-		message: 'Error: <%= error.message %>',
+		title: 'Compilation error',
+		message: '<%= error.message %>',
 		sound: 'Tink'
 	})(err);
 	
@@ -54,16 +57,20 @@ var onError = function(err) {
 /* ____________________________________________________________________________________ CLEAN */
 
 gulp.task('clean', function (callback) {
-	del(['build/**/*'], callback);
+	return del(['build/**/*'], callback);
 });
 
 
 /* ____________________________________________________________________________________ WATCH */
 
 gulp.task('jade', function() {
-	return gulp.src(['**/*.jade', '!**/includes/*.jade'])
+	return gulp.src(['static/**/*.jade'])
 		.pipe(plumber({errorHandler: onError}))
-		.pipe(jade())
+		.pipe(jade({
+			pretty: true,
+			basedir: './',
+			data: JSON.parse(fs.readFileSync('data/data.json', { encoding: 'utf8' }))
+		}))
 		.pipe(gulp.dest('build'))
 		.pipe(reload({stream:true}));
 });
@@ -80,8 +87,13 @@ gulp.task('less', function(){
 });
 
 gulp.task('js', function(){
-	return gulp.src(['js/**/*.js'])
+	var scripts = JSON.parse(fs.readFileSync('js/_compile.json', { encoding: 'utf8' }));
+
+	return gulp.src(scripts.src)
 		.pipe(plumber({errorHandler: onError}))
+		.pipe(sourcemaps.init())
+		.pipe(concat(scripts.name))
+		.pipe(sourcemaps.write())
 		.pipe(gulp.dest('build/js'))
 		.pipe(reload({stream:true}));
 });
@@ -91,9 +103,14 @@ gulp.task('php', function(){
 		.pipe(gulp.dest('build'));
 });
 
-gulp.task('libs', function(){
-	return gulp.src(['libs/**/*'])
-		.pipe(gulp.dest('build/libs'));
+gulp.task('json', function(){
+	return gulp.src(['data/**/*.json', '!data/data.json'])
+		.pipe(plumber({errorHandler: onError}))
+		.pipe(jsonTree({
+			filename: 'data.json'
+		}))
+		.pipe(replace('.json', ''))
+    	.pipe(gulp.dest('data'));
 });
 
 gulp.task('medias', function(){
@@ -156,15 +173,17 @@ gulp.task('css', function(callback) {
 gulp.task('make', function(callback) {
 	sequence(
 		'clean',
-		['css', 'images', 'fonts', 'medias', 'libs', 'jade', 'js', 'php'],
+		'json',
+		['css', 'images', 'fonts', 'medias', 'jade', 'js', 'php'],
 		'server',
 	callback);
 });
 
 gulp.task('default', ['make'], function() {
-	gulp.watch('**/*.jade', ['jade']);
+	gulp.watch(['static/**/*.jade', 'templates/**/*.jade', 'data/data.json'], ['jade']);
 	gulp.watch('less/**/*.less', ['less']);
-	gulp.watch('js/**/*.js', ['js']);
+	gulp.watch(['js/**/*.js', 'js/_compile.json'], ['js']);
+	gulp.watch(['data/**/*.json', '!data/data.json'], ['json']);
 });
 
 
@@ -183,24 +202,13 @@ gulp.task('less-dist', ['spritesheet'], function(){
 });
 
 gulp.task('jade-dist', function() {
-	return gulp.src(['**/*.jade', '!**/includes/*.jade'])
-		.pipe(jade({pretty: true}))
-		.pipe(gulp.dest('.'));
-});
-
-gulp.task('js-dist', ['jade-dist'], function() {
-	var assets = useref.assets();
-
-	return gulp.src(['**/*.html', '!libs/**', '!node_modules/**'])
-		.pipe(assets)
-		.pipe(gulpif('*.js', uglify()))
-		.pipe(assets.restore())
-		.pipe(useref())
-		.pipe(gulp.dest('build'));
-});
-
-gulp.task('minify-html', ['js-dist'], function(callback) {
-	return gulp.src(['build/**/*.html'])
+	return gulp.src('static/**/*.jade')
+		.pipe(jade({
+			pretty: true,
+			basedir: './',
+			data: JSON.parse(fs.readFileSync('data/data.json', { encoding: 'utf8' }))
+		}))
+		.pipe(htmlvalidator())
 		.pipe(htmlmin({
 			removeComments: true,
 			removeCommentsFromCDATA: true,
@@ -218,8 +226,13 @@ gulp.task('minify-html', ['js-dist'], function(callback) {
 		.pipe(gulp.dest('build'));
 });
 
-gulp.task('clean-html', ['minify-html'], function(callback) {
-	del(['**/*.html', '!build/**', '!libs/**', '!node_modules/**'], callback);
+gulp.task('js-dist', function() {
+	var scripts = JSON.parse(fs.readFileSync('js/_compile.json', { encoding: 'utf8' }));
+
+	return gulp.src(scripts.src)
+		.pipe(concat(scripts.name))
+		.pipe(uglify())
+		.pipe(gulp.dest('build/js'));
 });
 
 gulp.task('images-dist', function(){
@@ -234,13 +247,29 @@ gulp.task('images-dist', function(){
 				{ removeEmptyAttrs: true }
 			]
 		}))
-		.pipe(gulp.dest('build/img'))
+		.pipe(gulp.dest('build/img'));
+});
+
+gulp.task('optimize-images', ['images-dist'], function() {
+	return gulp.src('.')
 		.pipe(run('imageOptim -j -a -q -d build/img/'));
+});
+
+gulp.task('done', function() {
+	return gulp.src('.')
+		.pipe(run('open -a iterm'))
+		.pipe(notify({
+			title: 'Compilation complete',
+			message: 'Your distribution folder is now ready',
+			sound: 'Tink'
+		}));
 });
 
 gulp.task('dist', function(callback) {
 	sequence(
 		'clean',
-		['clean-html', 'images-dist', 'less-dist', 'fonts', 'medias', 'php'],
+		'json',
+		['less-dist', 'jade-dist', 'js-dist', 'optimize-images', 'fonts', 'medias', 'php'],
+		'done',
 	callback);
 });
